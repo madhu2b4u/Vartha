@@ -5,7 +5,6 @@ import org.springframework.stereotype.Repository
 import org.vartha.news.model.ParsedNews
 
 @Repository
-interface NewsRepository : MongoRepository<ParsedNews, Int> {
-
-    fun getParsedNewsItem(id : Int): ParsedNews
+interface ParsedNewsRepository : MongoRepository<ParsedNews, String> {
+    fun findByCategory(category: String): MutableList<ParsedNews>
 }

@@ -1,24 +1,22 @@
 package org.vartha.news.model
 
-import jakarta.validation.constraints.NotBlank
-import jakarta.validation.constraints.Size
-import org.springframework.data.annotation.Id
-import org.springframework.data.mongodb.core.index.Indexed
+import com.fasterxml.jackson.annotation.JsonProperty
+import org.bson.types.ObjectId
 import org.springframework.data.mongodb.core.mapping.Document
 import org.springframework.stereotype.Component
 
 @Component
 @Document("parsednews")
-data class ParsedNewsItem (
-    @Id
-    private var id: Long = 0,
-    @NotBlank
-    @Size(max = 100)
-    @Indexed(unique = true)
-    private var loc: String,
-    var source: String,
-    var publicationDate: String,
-    var title: String,
+data class ParsedNews(
+    var id: String = ObjectId.get().toHexString(),
+    var loc: String = "",
+    var source: String = "",
+    var publicationDate: String = "",
+    var title: String = "",
     var images: List<String>?,
-    var caption: String?
+    var caption: String? = "",
+    var category: String = "",
+    var summary: String = ""
 )
+
+data class UpdateRequest( @JsonProperty("summary") var summary: String = "")

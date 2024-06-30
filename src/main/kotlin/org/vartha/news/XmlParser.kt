@@ -1,21 +1,19 @@
-package com.webcrawler
+package org.vartha.news
+
 
 import com.google.gson.GsonBuilder
 import com.mongodb.client.MongoClients
 import com.mongodb.client.MongoCollection
 import com.mongodb.client.model.ReplaceOptions
-import com.webcrawler.demo.GEMINI_API_URL
-import com.webcrawler.demo.ImageExtractor.fetchHtmlFromUrl
-import com.webcrawler.demo.YOUR_API_KEY
-import com.webcrawler.demo.extractCategory
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
-import org.springframework.web.servlet.function.ServerResponse.async
 import org.w3c.dom.Element
 import org.w3c.dom.NodeList
+import java.io.IOException
+import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
 import java.net.http.HttpClient
@@ -36,9 +34,9 @@ data class NewsItem(
 )
 
 fun main() = runBlocking {
-    val rnzNews = async { fetchRNZNews("https://www.rnz.co.nz/sitemap-news") }
     val nzHeraldNews = async { fetchNZHeraldNews("https://www.nzherald.co.nz/arcio/sitemap/") }
     val oneNews = async { fetchOneNews("https://www.1news.co.nz/arc/outboundfeeds/news-sitemap/") }
+    val rnzNews = async { fetchRNZNews("https://www.rnz.co.nz/sitemap-news") }
 
     val allNews = mutableListOf<NewsItem>()
     allNews.addAll(rnzNews.await())
@@ -66,6 +64,26 @@ fun main() = runBlocking {
     println(jsonOutput)
 }
 
+private fun fetchHtmlFromUrl(urlString: String): String {
+    val connection = URL(urlString).openConnection() as HttpURLConnection
+    connection.apply {
+        requestMethod = "GET"
+        setRequestProperty("User-Agent", "Mozilla/5.0")
+        connect()
+    }
+    return connection.inputStream.bufferedReader().readText().also {
+        if (connection.responseCode != HttpURLConnection.HTTP_OK) {
+            throw IOException("Server returned HTTP response code: ${connection.responseCode} for URL: $urlString")
+        }
+    }
+}
+
+fun extractCategory(url: String): String {
+    val regex = Regex("co\\.nz/([^/]+)/")
+    val category = regex.find(url)?.groups?.get(1)?.value ?: "Uncategorized"
+    return if (category == "news") "nz-news" else category
+}
+
 fun formatDate(dateString: String): String {
     val formats = listOf(
         SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ"),
@@ -81,7 +99,6 @@ fun formatDate(dateString: String): String {
             // Try the next format
         }
     }
-
     // If no valid format found, return the original string
     return dateString
 }
@@ -117,31 +134,32 @@ suspend fun fetchOneNews(xmlURL: String): List<NewsItem> {
     }
 }
 
-suspend inline fun <reified T> fetchNews(xmlURL: String, crossinline mapper: suspend (Element) -> T): List<NewsItem> = coroutineScope {
-    val xmlContent = URL(xmlURL).readText()
-    val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(xmlContent.byteInputStream())
-    val nodeList: NodeList = document.getElementsByTagName("url")
-    val newsList = mutableListOf<Deferred<T>>()
+suspend inline fun <reified T> fetchNews(xmlURL: String, crossinline mapper: suspend (Element) -> T): List<NewsItem> =
+    coroutineScope {
+        val xmlContent = URL(xmlURL).readText()
+        val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(xmlContent.byteInputStream())
+        val nodeList: NodeList = document.getElementsByTagName("url")
+        val newsList = mutableListOf<Deferred<T>>()
 
-    for (i in 0 until nodeList.length) {
-        val node = nodeList.item(i) as? Element ?: continue
-        val newsItemDeferred = async {
-            mapper(node)
+        for (i in 0 until nodeList.length) {
+            val node = nodeList.item(i) as? Element ?: continue
+            val newsItemDeferred = async {
+                mapper(node)
+            }
+            newsList.add(newsItemDeferred)
         }
-        newsList.add(newsItemDeferred)
+
+        // Wait for all news items to be processed
+        val fetchedNewsList = newsList.awaitAll()
+
+        // Summarize the news in parallel
+        fetchedNewsList.map { item ->
+            async {
+                val loc = (item as NewsItem).loc
+                (item as NewsItem).copy(summarizedNews = "")
+            }
+        }.awaitAll()
     }
-
-    // Wait for all news items to be processed
-    val fetchedNewsList = newsList.awaitAll()
-
-    // Summarize the news in parallel
-    fetchedNewsList.map { item ->
-        async {
-            val loc = (item as NewsItem).loc
-            (item as NewsItem).copy(summarizedNews = "")
-        }
-    }.awaitAll()
-}
 
 suspend fun fetchAndProcessImages(newsItem: NewsItem): List<String>? {
     return withContext(Dispatchers.IO) {
@@ -149,7 +167,7 @@ suspend fun fetchAndProcessImages(newsItem: NewsItem): List<String>? {
             val htmlContent = fetchHtmlFromUrl(newsItem.loc)
             val imageUrls = extractImageUrls(htmlContent)
             when (newsItem.source) {
-                "NZ Herald" -> imageUrls.filter { it.contains("resizer") }.map { getNZHeraldImage(it, 1024, 1024) }
+                "NZ Herald" -> imageUrls.filter { it.contains("resizer/v2/") }.map { getNZHeraldImage(it, 1024, 1024) }
                 "RNZ" -> listOfNotNull(getRNZImage(imageUrls, 1050))
                 else -> newsItem.images ?: emptyList()
             }
@@ -187,11 +205,15 @@ fun fetchTitleFromUrl(url: String): String {
     }
 }
 
+/*
 suspend fun summarizeNews(url: String): String {
     return withContext(Dispatchers.IO) {
         try {
             val requestBody = JSONObject().apply {
-                put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", url)))))
+                put(
+                    "contents",
+                    JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", url))))
+                )
             }
 
             val client = HttpClient.newHttpClient()
@@ -219,10 +241,12 @@ suspend fun summarizeNews(url: String): String {
         }
     }
 }
+*/
 
 //insert into mongo db
 private fun insertIntoMongoDB(newsList: List<NewsItem>) {
-    val mongoClient = MongoClients.create("mongodb+srv://madhukalyanm:m4dhuk4ly4nN@cluster0.imxivg7.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+    val mongoClient =
+        MongoClients.create("mongodb+srv://madhukalyanm:m4dhuk4ly4nN@cluster0.imxivg7.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
     val database = mongoClient.getDatabase("vartha")
     val collectionName = "parsednews"
     val collection: MongoCollection<org.bson.Document> = database.getCollection(collectionName)
@@ -235,6 +259,7 @@ private fun insertIntoMongoDB(newsList: List<NewsItem>) {
             .append("source", newsItem.source)
             .append("images", newsItem.images)
             .append("category", newsItem.category)
+            .append("summary", newsItem.summarizedNews)
 
         val filter = org.bson.Document("loc", newsItem.loc)
         val options = ReplaceOptions().upsert(true)

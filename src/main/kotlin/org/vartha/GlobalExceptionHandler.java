@@ -1,4 +1,4 @@
-package com.example.onepieceanime.anime;
+package org.vartha;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.*;
