@@ -19,4 +19,8 @@ data class ParsedNews(
     var summary: String = ""
 )
 
+data class ParsedNewsCategory(
+    val category: String
+)
+
 data class UpdateRequest( @JsonProperty("summary") var summary: String = "")

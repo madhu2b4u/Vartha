@@ -22,6 +22,12 @@ class ParsedNewsController(
         return parsedNewsRepository.findByCategory(category)
     }
 
+    @GetMapping("/fetchCategories")
+    fun fetchCategories(): List<String> {
+        val categories = parsedNewsRepository.findAllCategories()
+        return categories.map { it.category }.distinct()
+    }
+
     @PutMapping("/{id}")
     fun updateCharacter(@PathVariable id: String, @RequestBody updateRequest: UpdateRequest): ResponseEntity<ParsedNews> {
         val existingNews: Optional<ParsedNews> = parsedNewsRepository.findById(id)
